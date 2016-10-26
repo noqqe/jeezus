@@ -1,0 +1,97 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import sys
+import os.path
+import syslog
+import argparse
+from inbox import Inbox
+import email
+import subprocess
+import smtplib
+
+inbox = Inbox()
+
+ap = argparse.ArgumentParser()
+ap.add_argument('--listen', '-l', required=True)
+ap.add_argument('--deliver', '-d', required=True)
+ap.add_argument('--pipe-command', '-p')
+args = ap.parse_args()
+
+def format_args(args):
+    """
+    Formats some options from the argument parser
+    :args: argparser object
+    """
+    args.listenhost = args.listen.split(':')[0]
+    args.listenport = int(args.listen.split(':')[1])
+
+    args.deliverhost = args.deliver.split(':')[0]
+    args.deliverport = int(args.deliver.split(':')[1])
+
+    try:
+        args.pipe_command = args.pipe_command.split()
+    except AttributeError:
+        pass
+
+    if not os.path.isfile(args.pipe_command[0]):
+        log(syslog.LOG_CRIT, "Could not find %s" % args.pipe_command[0])
+        sys.exit(1)
+
+    return args
+
+
+def log(serv, msg):
+    syslog.openlog(logoption=syslog.LOG_PID, facility=syslog.LOG_MAIL)
+    syslog.syslog(serv, msg)
+
+def forward(to, sender, body, smtp, port):
+    """
+    Send mail to the destination smtp server.
+    Gets triggered when command was executed and mail was analyzed.
+    """
+    try:
+        s = smtplib.SMTP(smtp, port)
+        s.sendmail(sender, to, body)
+        return True
+    except:
+        log(syslog.LOG_ERR, "Error connecting to delivery smtp: %s:%s" % (args.deliverhost, args.deliverport))
+        return False
+
+
+def pipe_command(body, command):
+    """
+    If messages is recieved just pipe it through the anti spam command.
+    In this case the spam program of choice has to handle adding headers by itself.
+    Like bogofilter does
+    Message will not be modified by jeezus.
+    :body: str
+    :command: str
+    :returns: str
+    """
+    p = subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE)
+    out, err = p.communicate(input=bytes(body))
+    return(out)
+
+def add_header(body, header, value):
+    """
+    Add a custom header to mail body
+    """
+    b = email.message_from_string(body)
+    b.add_header(header, value)
+    return b.as_string()
+
+@inbox.collate
+def handle(to, sender, subject, body):
+    body = pipe_command(body, args.pipe_command)
+    forward(to, sender, body, args.deliverhost, args.deliverport)
+    log(syslog.LOG_INFO, "Checked mail rcpt=%s from=%s subj=\"%s\"" % (' '.join(to), sender, subject))
+
+
+def main(args=args):
+    args = format_args(args)
+    inbox.serve(address=args.listenhost, port=args.listenport)
+
+if __name__ == '__main__':
+    main()
+
