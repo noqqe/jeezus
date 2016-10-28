@@ -75,8 +75,9 @@ def pipe_command(body, command):
     :returns: str
     """
     p = subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE)
-    out, err = p.communicate(input=bytes(body))
-    
+    out = p.communicate(input=bytes(body))
+    err = p.returncode
+
     if err == 0:
         status = "Spam"
     elif err == 1:
@@ -85,7 +86,7 @@ def pipe_command(body, command):
         status = "Unsure"
     else:
         status = "Error"
-     
+
     return (out,status)
 
 def pyzor_command(body, header):
