@@ -9,6 +9,10 @@ from inbox import Inbox
 import email
 import subprocess
 import smtplib
+import pyzor
+import pyzor.client
+import pyzor.digest
+
 
 inbox = Inbox()
 
@@ -16,6 +20,7 @@ ap = argparse.ArgumentParser()
 ap.add_argument('--listen', '-l', required=True)
 ap.add_argument('--deliver', '-d', required=True)
 ap.add_argument('--pipe-command', '-p')
+ap.add_argument('--check-pyzor', '-c', action='store_true')
 args = ap.parse_args()
 
 def format_args(args):
@@ -32,7 +37,7 @@ def format_args(args):
     try:
         args.pipe_command = args.pipe_command.split()
     except AttributeError:
-        pass
+        args.pipe_command = None
 
     if not os.path.isfile(args.pipe_command[0]):
         log(syslog.LOG_CRIT, "Could not find %s" % args.pipe_command[0])
@@ -45,7 +50,7 @@ def log(serv, msg):
     syslog.openlog(logoption=syslog.LOG_PID, facility=syslog.LOG_MAIL)
     syslog.syslog(serv, msg)
 
-def forward(to, sender, body, smtp, port):
+def deliver(to, sender, body, smtp, port):
     """
     Send mail to the destination smtp server.
     Gets triggered when command was executed and mail was analyzed.
@@ -71,7 +76,40 @@ def pipe_command(body, command):
     """
     p = subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE)
     out, err = p.communicate(input=bytes(body))
-    return(out)
+    if err == 0:
+        status = "Spam"
+    else:
+        status = "Ham"
+    return (out,status)
+
+def pyzor_command(body, header):
+    """
+    If flag is set, the message body digest will be sent
+    to public.pyzor.org and matched against other spam traps.
+    :body: str
+    :header: str
+    :returns: tuple
+    """
+    client = pyzor.client.Client()
+    b = email.message_from_string(body)
+    digest = pyzor.digest.DataDigester(b).value
+
+    try:
+        r = client.check(digest)
+    except pyzor.TimeoutError:
+        status = "timeout"
+        return body, status
+
+    bl = r["Count"]
+    wl = r["WL-Count"]
+
+    if bl > 0 and not wl >= 2:
+        status = "Spam"
+    else:
+        status = "Ham"
+
+    body = add_header(body, header, status)
+    return body, status
 
 def add_header(body, header, value):
     """
@@ -83,13 +121,23 @@ def add_header(body, header, value):
 
 @inbox.collate
 def handle(to, sender, subject, body):
-    body = pipe_command(body, args.pipe_command)
-    forward(to, sender, body, args.deliverhost, args.deliverport)
-    log(syslog.LOG_INFO, "Checked mail rcpt=%s from=%s subj=\"%s\"" % (' '.join(to), sender, subject))
+
+    if args.pipe_command is not None:
+        body, command_status = pipe_command(body, args.pipe_command)
+    if args.check_pyzor is True:
+        body, pyzor_status = pyzor_command(body, "X-Pyzor")
+
+
+    deliver(to, sender, body, args.deliverhost, args.deliverport)
+
+    decoded_subj = email.header.decode_header(subject)[0][0]
+
+    log(syslog.LOG_INFO, "Results rcpt=%s from=%s command=%s pyzor=%s subj=\"%s\"" % (' '.join(to), sender, command_status, pyzor_status, decoded_subj))
 
 
 def main(args=args):
     args = format_args(args)
+    print args
     inbox.serve(address=args.listenhost, port=args.listenport)
 
 if __name__ == '__main__':
