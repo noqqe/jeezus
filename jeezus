@@ -106,10 +106,7 @@ def pyzor_command(body, header):
         status = "timeout"
         return body, status
 
-    bl = r["Count"]
-    wl = r["WL-Count"]
-
-    if bl > 0 and not wl >= 2:
+    if r["Count"] > 0 and r["WL-Count"] <= 2:
         status = "Spam"
     else:
         status = "Ham"
@@ -128,11 +125,10 @@ def add_header(body, header, value):
 @inbox.collate
 def handle(to, sender, subject, body):
 
-    if args.pipe_command is not None:
-        body, command_status = pipe_command(body, args.pipe_command)
     if args.check_pyzor is True:
         body, pyzor_status = pyzor_command(body, "X-Pyzor")
-
+    if args.pipe_command is not None:
+        body, command_status = pipe_command(body, args.pipe_command)
 
     deliver(to, sender, body, args.deliverhost, args.deliverport)
 
