@@ -75,7 +75,7 @@ def pipe_command(body, command):
     :returns: str
     """
     p = subprocess.Popen(command,stdin=subprocess.PIPE,stdout=subprocess.PIPE)
-    out = p.communicate(input=bytes(body))
+    out, x = p.communicate(input=bytes(body))
     err = p.returncode
 
     if err == 0:
