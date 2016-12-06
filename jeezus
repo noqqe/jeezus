@@ -140,7 +140,7 @@ def handle(to, sender, subject, body):
 
 def main(args=args):
     args = format_args(args)
-    print args
+    print(args)
     inbox.serve(address=args.listenhost, port=args.listenport)
 
 if __name__ == '__main__':
